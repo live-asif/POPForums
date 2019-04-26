@@ -36,7 +36,7 @@ namespace PopForums.Services
 
 	public class PostService : IPostService
 	{
-		public PostService(IPostRepository postRepository, IProfileRepository profileRepository, ISettingsManager settingsManager, ITopicService topicService, ITextParsingService textParsingService, IModerationLogService moderationLogService, IForumService forumService, IEventPublisher eventPublisher, IUserService userService, IFeedService feedService, ITopicRepository topicRepository)
+		public PostService(IPostRepository postRepository, IProfileRepository profileRepository, ISettingsManager settingsManager, ITopicService topicService, ITextParsingService textParsingService, IModerationLogService moderationLogService, IForumService forumService, IEventPublisher eventPublisher, IUserService userService, IFeedService feedService, ITopicRepository topicRepository, ISearchIndexQueueRepository searchIndexQueueRepository, ITenantService tenantService)
 		{
 			_postRepository = postRepository;
 			_profileRepository = profileRepository;
@@ -49,6 +49,8 @@ namespace PopForums.Services
 			_userService = userService;
 			_feedService = feedService;
 			_topicRepository = topicRepository;
+			_searchIndexQueueRepository = searchIndexQueueRepository;
+			_tenantService = tenantService;
 		}
 
 		private readonly IPostRepository _postRepository;
@@ -62,6 +64,8 @@ namespace PopForums.Services
 		private readonly IUserService _userService;
 		private readonly IFeedService _feedService;
 		private readonly ITopicRepository _topicRepository;
+		private readonly ISearchIndexQueueRepository _searchIndexQueueRepository;
+		private readonly ITenantService _tenantService;
 
 		public List<Post> GetPosts(Topic topic, bool includeDeleted, int pageIndex, out PagerContext pagerContext)
 		{
@@ -98,7 +102,7 @@ namespace PopForums.Services
 
 		public List<Post> GetPostWithReplies(int id, bool includeDeleted)
 		{
-			return _postRepository.GetPostWithRepies(id, includeDeleted);
+			return _postRepository.GetPostWithReplies(id, includeDeleted);
 		}
 
 		public Post Get(int postID)
@@ -183,6 +187,8 @@ namespace PopForums.Services
 
 		public void EditPost(Post post, PostEdit postEdit, User editingUser)
 		{
+			// TODO: text parsing is controller for new topic and replies, see issue #121 https://github.com/POPWorldMedia/POPForums/issues/121
+			// TODO: also not checking for empty posts
 			var oldText = post.FullText;
 			post.Title = _textParsingService.Censor(postEdit.Title);
 			if (postEdit.IsPlainText)
@@ -195,7 +201,7 @@ namespace PopForums.Services
 			post.IsEdited = true;
 			_postRepository.Update(post);
 			_moderationLogService.LogPost(editingUser, ModerationType.PostEdit, post, postEdit.Comment, oldText);
-			_topicRepository.MarkTopicForIndexing(post.TopicID);
+			_searchIndexQueueRepository.Enqueue(new SearchIndexPayload {TenantID = _tenantService.GetTenant(), TopicID = post.TopicID});
 		}
 
 		public void Delete(Post post, User user)

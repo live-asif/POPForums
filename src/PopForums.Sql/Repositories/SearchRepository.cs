@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using PopForums.Data.Sql;
+using Dapper;
 using PopForums.Models;
 using PopForums.Repositories;
 using PopForums.Services;
@@ -20,92 +21,46 @@ namespace PopForums.Sql.Repositories
 
 		public virtual List<string> GetJunkWords()
 		{
-			var words = new List<string>();
+			List<string> words = null;
 			_sqlObjectFactory.GetConnection().Using(connection =>
-				connection.Command(_sqlObjectFactory, "SELECT JunkWord FROM pf_JunkWords ORDER BY JunkWord")
-					.ExecuteReader()
-					.ReadAll(r => words.Add(r.GetString(0))));
+				words = connection.Query<string>("SELECT JunkWord FROM pf_JunkWords ORDER BY JunkWord").ToList());
 			return words;
 		}
 
 		public virtual void CreateJunkWord(string word)
 		{
 			var exists = false;
-			_sqlObjectFactory.GetConnection().Using(connection => exists =
-				connection.Command(_sqlObjectFactory, "SELECT JunkWord FROM pf_JunkWords WHERE JunkWord LIKE @JunkWord")
-					.AddParameter(_sqlObjectFactory, "@JunkWord", word)
-					.ExecuteReader().Read());
+			_sqlObjectFactory.GetConnection().Using(connection => 
+				exists = connection.Query<string>("SELECT JunkWord FROM pf_JunkWords WHERE JunkWord LIKE @JunkWord", new { JunkWord = word }).Any());
 			if (exists)
 				return;
 			_sqlObjectFactory.GetConnection().Using(connection =>
-				connection.Command(_sqlObjectFactory, "INSERT INTO pf_JunkWords (JunkWord) VALUES (@JunkWord)")
-				.AddParameter(_sqlObjectFactory, "@JunkWord", word)
-				.ExecuteNonQuery());
+				connection.Execute("INSERT INTO pf_JunkWords (JunkWord) VALUES (@JunkWord)", new { JunkWord = word }));
 		}
 
 		public virtual void DeleteJunkWord(string word)
 		{
 			_sqlObjectFactory.GetConnection().Using(connection =>
-				connection.Command(_sqlObjectFactory, "DELETE FROM pf_JunkWords WHERE JunkWord = @JunkWord")
-				.AddParameter(_sqlObjectFactory, "@JunkWord", word)
-				.ExecuteNonQuery());
-		}
-
-		public Topic GetNextTopicForIndexing()
-		{
-			var sql = @"WITH cte AS (
-SELECT TOP(1) TopicID
-FROM pf_SearchQueue WITH (ROWLOCK, READPAST)
-ORDER BY Id)
-DELETE FROM cte
-OUTPUT DELETED.TopicID;";
-			var topicID = 0;
-			_sqlObjectFactory.GetConnection().Using(connection =>
-				connection.Command(_sqlObjectFactory, sql)
-				.ExecuteReader()
-				.ReadOne(r => topicID = r.GetInt32(0)));
-			if (topicID == 0)
-				return null;
-			Topic topic = null;
-			_sqlObjectFactory.GetConnection().Using(connection =>
-				connection.Command(_sqlObjectFactory, "SELECT " + TopicRepository.TopicFields + " FROM pf_Topic WHERE TopicID = @TopicID")
-				.AddParameter(_sqlObjectFactory, "@TopicID", topicID)
-				.ExecuteReader()
-				.ReadOne(r => topic = TopicRepository.GetTopicFromReader(r)));
-			return topic;
-		}
-
-		public void MarkTopicAsIndexed(int topicID)
-		{
-			_sqlObjectFactory.GetConnection().Using(connection =>
-				connection.Command(_sqlObjectFactory, "UPDATE pf_Topic SET IsIndexed = 1 WHERE TopicID = @TopicID")
-				.AddParameter(_sqlObjectFactory, "@TopicID", topicID)
-				.ExecuteNonQuery());
+				connection.Execute("DELETE FROM pf_JunkWords WHERE JunkWord = @JunkWord", new { JunkWord = word }));
 		}
 
 		public virtual void DeleteAllIndexedWordsForTopic(int topicID)
 		{
 			_sqlObjectFactory.GetConnection().Using(connection =>
-				connection.Command(_sqlObjectFactory, "DELETE FROM pf_TopicSearchWords WHERE TopicID = @TopicID")
-				.AddParameter(_sqlObjectFactory, "@TopicID", topicID)
-				.ExecuteNonQuery());
+				connection.Execute("DELETE FROM pf_TopicSearchWords WHERE TopicID = @TopicID", new { TopicID = topicID }));
 		}
 
 		public virtual void SaveSearchWord(int topicID, string word, int rank)
 		{
 			_sqlObjectFactory.GetConnection().Using(connection =>
-				connection.Command(_sqlObjectFactory, "INSERT INTO pf_TopicSearchWords (SearchWord, TopicID, Rank) VALUES (@SearchWord, @TopicID, @Rank)")
-				.AddParameter(_sqlObjectFactory, "@SearchWord", word)
-				.AddParameter(_sqlObjectFactory, "@TopicID", topicID)
-				.AddParameter(_sqlObjectFactory, "@Rank", rank)
-				.ExecuteNonQuery());
+				connection.Execute("INSERT INTO pf_TopicSearchWords (SearchWord, TopicID, Rank) VALUES (@SearchWord, @TopicID, @Rank)", new { SearchWord = word, TopicID = topicID, Rank = rank }));
 		}
 
-		public virtual List<Topic> SearchTopics(string searchTerm, List<int> hiddenForums, SearchType searchType, int startRow, int pageSize, out int topicCount)
+		public virtual Response<List<Topic>> SearchTopics(string searchTerm, List<int> hiddenForums, SearchType searchType, int startRow, int pageSize, out int topicCount)
 		{
 			topicCount = 0;
 			if (searchTerm.Trim() == String.Empty)
-				return new List<Topic>();
+				return new Response<List<Topic>>(new List<Topic>());
 			var topics = new List<Topic>();
 			var wordArray = searchTerm.Split(new [] { ' ' });
 			var wordList = new List<string>();
@@ -179,11 +134,10 @@ OUTPUT DELETED.TopicID;";
 
 			sb.Append("),\r\nEntries as (SELECT *,ROW_NUMBER() OVER (ORDER BY ");
 			sb.Append(orderBy);
-			sb.Append(") AS Row, COUNT(*) OVER () as cnt FROM FirstEntries WHERE GroupRow = 1)\r\nSELECT TopicID, ForumID, Title, ReplyCount, ViewCount, StartedByUserID, StartedByName, LastPostUserID, LastPostName, LastPostTime, IsClosed, IsPinned, IsDeleted, IsIndexed, UrlName, AnswerPostID, cnt FROM Entries WHERE Row BETWEEN @StartRow AND @StartRow + @PageSize - 1");
+			sb.Append(") AS Row, COUNT(*) OVER () as cnt FROM FirstEntries WHERE GroupRow = 1)\r\nSELECT TopicID, ForumID, Title, ReplyCount, ViewCount, StartedByUserID, StartedByName, LastPostUserID, LastPostName, LastPostTime, IsClosed, IsPinned, IsDeleted, UrlName, AnswerPostID, cnt FROM Entries WHERE Row BETWEEN @StartRow AND @StartRow + @PageSize - 1");
 
 			if (words.Length == 0)
-				return topics;
-
+				return new Response<List<Topic>>(new List<Topic>());
 
 			var connection = _sqlObjectFactory.GetConnection();
 			var command = connection.Command(_sqlObjectFactory, sb.ToString());
@@ -196,13 +150,31 @@ OUTPUT DELETED.TopicID;";
 
 			while (reader.Read())
 			{
-				var topic = TopicRepository.GetTopicFromReader(reader);
+				var topic = new Topic
+				{
+					TopicID = reader.GetInt32(0),
+					ForumID = reader.GetInt32(1),
+					Title = reader.GetString(2),
+					ReplyCount = reader.GetInt32(3),
+					ViewCount = reader.GetInt32(4),
+					StartedByUserID = reader.GetInt32(5),
+					StartedByName = reader.GetString(6),
+					LastPostUserID = reader.GetInt32(7),
+					LastPostName = reader.GetString(8),
+					LastPostTime = reader.GetDateTime(9),
+					IsClosed = reader.GetBoolean(10),
+					IsPinned = reader.GetBoolean(11),
+					IsDeleted = reader.GetBoolean(12),
+					UrlName = reader.GetString(13),
+					AnswerPostID = reader.NullIntDbHelper(14)
+				};
 				topics.Add(topic);
 				topicCount = Convert.ToInt32(reader["cnt"]);
 			}
 			reader.Dispose();
 			connection.Close();
-			return topics;
+			// simple response since results are from database, not external service like ES or Azure
+			return new Response<List<Topic>>(topics);
 		}
 	}
 }

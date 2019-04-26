@@ -33,12 +33,12 @@ namespace PopForums.Services
 		int TopicLastPostID(int topicID);
 		void HardDeleteTopic(Topic topic, User user);
 		void SetAnswer(User user, Topic topic, Post post, string userUrl, string topicUrl);
-		void MarkTopicForIndexing(int topicID);
+		void QueueTopicForIndexing(int topicID);
 	}
 
 	public class TopicService : ITopicService
 	{
-		public TopicService(IForumRepository forumRepository, ITopicRepository topicRepository, IPostRepository postRepository, IProfileRepository profileRepository, ITextParsingService textParsingService, ISettingsManager settingsManager, ISubscribedTopicsService subscribedTopicsService, IModerationLogService moderationLogService, IForumService forumService, IEventPublisher eventPublisher, IBroker broker, ISearchRepository searchRepository, IUserRepository userRepository)
+		public TopicService(IForumRepository forumRepository, ITopicRepository topicRepository, IPostRepository postRepository, IProfileRepository profileRepository, ITextParsingService textParsingService, ISettingsManager settingsManager, ISubscribedTopicsService subscribedTopicsService, IModerationLogService moderationLogService, IForumService forumService, IEventPublisher eventPublisher, IBroker broker, ISearchRepository searchRepository, IUserRepository userRepository, ISearchIndexQueueRepository searchIndexQueueRepository, ITenantService tenantService)
 		{
 			_forumRepository = forumRepository;
 			_topicRepository = topicRepository;
@@ -53,6 +53,8 @@ namespace PopForums.Services
 			_broker = broker;
 			_searchRepository = searchRepository;
 			_userRepository = userRepository;
+			_searchIndexQueueRepository = searchIndexQueueRepository;
+			_tenantService = tenantService;
 		}
 
 		private readonly IForumRepository _forumRepository;
@@ -68,6 +70,8 @@ namespace PopForums.Services
 		private readonly IBroker _broker;
 		private readonly ISearchRepository _searchRepository;
 		private readonly IUserRepository _userRepository;
+		private readonly ISearchIndexQueueRepository _searchIndexQueueRepository;
+		private readonly ITenantService _tenantService;
 
 		public List<Topic> GetTopics(Forum forum, bool includeDeleted, int pageIndex, out PagerContext pagerContext)
 		{
@@ -121,10 +125,7 @@ namespace PopForums.Services
 		public Post PostReply(Topic topic, User user, int parentPostID, string ip, bool isFirstInTopic, NewPost newPost, DateTime postTime, string topicLink, Func<User, string> unsubscribeLinkGenerator, string userUrl, Func<Post, string> postLinkGenerator)
 		{
 			newPost.Title = _textParsingService.Censor(newPost.Title);
-			if (newPost.IsPlainText)
-				newPost.FullText = _textParsingService.ForumCodeToHtml(newPost.FullText);
-			else
-				newPost.FullText = _textParsingService.ClientHtmlToHtml(newPost.FullText);
+			// TODO: text parsing is controller, see issue #121 https://github.com/POPWorldMedia/POPForums/issues/121
 			var postID = _postRepository.Create(topic.TopicID, parentPostID, ip, isFirstInTopic, newPost.IncludeSignature, user.UserID, user.Name, newPost.Title, newPost.FullText, postTime, false, user.Name, null, false, 0);
 			var post = new Post
 			{
@@ -148,7 +149,7 @@ namespace PopForums.Services
 			_topicRepository.UpdateLastTimeAndUser(topic.TopicID, user.UserID, user.Name, postTime);
 			_forumRepository.UpdateLastTimeAndUser(topic.ForumID, postTime, user.Name);
 			_forumRepository.IncrementPostCount(topic.ForumID);
-			_topicRepository.MarkTopicForIndexing(topic.TopicID);
+			_searchIndexQueueRepository.Enqueue(new SearchIndexPayload {TenantID = _tenantService.GetTenant(), TopicID = topic.TopicID});
 			_profileRepository.SetLastPostID(user.UserID, postID);
 			if (unsubscribeLinkGenerator != null)
 				_subscribedTopicService.NotifySubscribers(topic, user, topicLink, unsubscribeLinkGenerator);
@@ -266,7 +267,7 @@ namespace PopForums.Services
 				var urlName = newTitle.ToUniqueUrlName(_topicRepository.GetUrlNamesThatStartWith(newTitle.ToUrlName()));
 				topic.UrlName = urlName;
 				_topicRepository.UpdateTitleAndForum(topic.TopicID, forum.ForumID, newTitle, urlName);
-				_topicRepository.MarkTopicForIndexing(topic.TopicID);
+				_searchIndexQueueRepository.Enqueue(new SearchIndexPayload { TenantID = _tenantService.GetTenant(), TopicID = topic.TopicID });
 				_forumService.UpdateCounts(forum);
 				_forumService.UpdateLast(forum);
 				var oldForum = _forumService.Get(oldTopic.ForumID);
@@ -320,9 +321,9 @@ namespace PopForums.Services
 			_topicRepository.UpdateAnswerPostID(topic.TopicID, post.PostID);
 		}
 
-		public void MarkTopicForIndexing(int topicID)
+		public void QueueTopicForIndexing(int topicID)
 		{
-			_topicRepository.MarkTopicForIndexing(topicID);
+			_searchIndexQueueRepository.Enqueue(new SearchIndexPayload { TenantID = _tenantService.GetTenant(), TopicID = topicID });
 		}
 	}
 }

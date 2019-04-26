@@ -3,13 +3,13 @@ using System.Collections.Generic;
 using Microsoft.Extensions.Caching.Memory;
 using PopForums.Configuration;
 
-namespace PopForums.Data.Sql
+namespace PopForums.Sql
 {
 	public class CacheHelper : ICacheHelper
 	{
-		public CacheHelper()
+		public CacheHelper(IConfig config)
 		{
-			_config = new Config();
+			_config = config;
 			if (_cache == null)
 			{
 				var options = new MemoryCacheOptions();
@@ -17,7 +17,7 @@ namespace PopForums.Data.Sql
 			}
 		}
 
-		private readonly Config _config;
+		private readonly IConfig _config;
 		private static IMemoryCache _cache;
 
 		public void SetCacheObject(string key, object value)

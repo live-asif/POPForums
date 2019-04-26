@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Security;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using PopForums.Configuration;
@@ -15,7 +16,7 @@ namespace PopForums.Mvc.Areas.Forums.Controllers
 	[Area("Forums")]
 	public class ForumController : Controller
 	{
-		public ForumController(ISettingsManager settingsManager, IForumService forumService, ITopicService topicService, IPostService postService, ITopicViewCountService topicViewCountService, ISubscribedTopicsService subService, ILastReadService lastReadService, IFavoriteTopicService favoriteTopicService, IProfileService profileService, IUserRetrievalShim userRetrievalShim)
+		public ForumController(ISettingsManager settingsManager, IForumService forumService, ITopicService topicService, IPostService postService, ITopicViewCountService topicViewCountService, ISubscribedTopicsService subService, ILastReadService lastReadService, IFavoriteTopicService favoriteTopicService, IProfileService profileService, IUserRetrievalShim userRetrievalShim, ITopicViewLogService topicViewLogService, ITextParsingService textParsingService)
 		{
 			_settingsManager = settingsManager;
 			_forumService = forumService;
@@ -27,6 +28,8 @@ namespace PopForums.Mvc.Areas.Forums.Controllers
 			_favoriteTopicService = favoriteTopicService;
 			_profileService = profileService;
 			_userRetrievalShim = userRetrievalShim;
+			_topicViewLogService = topicViewLogService;
+			_textParsingService = textParsingService;
 		}
 
 		public static string Name = "Forum";
@@ -41,6 +44,8 @@ namespace PopForums.Mvc.Areas.Forums.Controllers
 		private readonly IFavoriteTopicService _favoriteTopicService;
 		private readonly IProfileService _profileService;
 		private readonly IUserRetrievalShim _userRetrievalShim;
+		private readonly ITopicViewLogService _topicViewLogService;
+		private readonly ITextParsingService _textParsingService;
 
 		public ActionResult Index(string urlName, int page = 1)
 		{
@@ -105,6 +110,7 @@ namespace PopForums.Mvc.Areas.Forums.Controllers
 				return Json(new BasicJsonMessage { Message = Resources.ForumNoPost, Result = false });
 			if (_postService.IsNewPostDupeOrInTimeLimit(newPost, user))
 				return Json(new BasicJsonMessage { Message = String.Format(Resources.PostWait, _settingsManager.Current.MinimumSecondsBetweenPosts), Result = false });
+			newPost.FullText = newPost.IsPlainText ? _textParsingService.ForumCodeToHtml(newPost.FullText) : _textParsingService.ClientHtmlToHtml(newPost.FullText);
 			if (String.IsNullOrWhiteSpace(newPost.FullText) || String.IsNullOrWhiteSpace(newPost.Title))
 				return Json(new BasicJsonMessage { Message = Resources.PostEmpty, Result = false });
 
@@ -147,7 +153,7 @@ namespace PopForums.Mvc.Areas.Forums.Controllers
 			return RedirectToActionPermanent("Topic", new { id = topic.UrlName });
 		}
 
-		public ActionResult Topic(string id, int page = 1)
+		public async Task<ActionResult> Topic(string id, int page = 1)
 		{
 			var topic = _topicService.Get(id);
 			if (topic == null)
@@ -204,6 +210,7 @@ namespace PopForums.Mvc.Areas.Forums.Controllers
 			var votedIDs = _postService.GetVotedPostIDs(user, posts);
 			var container = ComposeTopicContainer(topic, forum, permissionContext, isSubscribed, posts, pagerContext, isFavorite, signatures, avatars, votedIDs, lastReadTime);
 			_topicViewCountService.ProcessView(topic, HttpContext);
+			await _topicViewLogService.LogView(user?.UserID, topic.TopicID);
 			if (adapter.IsAdapterEnabled)
 			{
 				adapter.ForumAdapter.AdaptTopic(this, container);
@@ -319,6 +326,7 @@ namespace PopForums.Mvc.Areas.Forums.Controllers
 				return Json(new BasicJsonMessage { Message = Resources.ForumNoPost, Result = false });
 			if (_postService.IsNewPostDupeOrInTimeLimit(newPost, user))
 				return Json(new BasicJsonMessage { Message = String.Format(Resources.PostWait, _settingsManager.Current.MinimumSecondsBetweenPosts), Result = false });
+			newPost.FullText = newPost.IsPlainText ? _textParsingService.ForumCodeToHtml(newPost.FullText) : _textParsingService.ClientHtmlToHtml(newPost.FullText);
 			if (String.IsNullOrEmpty(newPost.FullText))
 				return Json(new BasicJsonMessage { Message = Resources.PostEmpty, Result = false });
 			if (newPost.ParentPostID != 0)
@@ -466,7 +474,6 @@ namespace PopForums.Mvc.Areas.Forums.Controllers
 		}
 
 		[HttpPost]
-		// TODO: test validate [ValidateInput(false)]
 		public ActionResult Edit(int id, PostEdit postEdit)
 		{
 			var post = _postService.Get(id);

@@ -1,9 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using Dapper;
 using PopForums.Configuration;
-using PopForums.Data.Sql;
 using PopForums.Models;
 using PopForums.Repositories;
 
@@ -37,7 +35,7 @@ namespace PopForums.Sql.Repositories
 						return friend;
 					},
 					new { FromUserID = userID },
-					splitOn: "ToUserID").ToList());
+					splitOn: "IsApproved").ToList());
 			return list;
 		}
 
@@ -54,7 +52,7 @@ namespace PopForums.Sql.Repositories
 						return friend;
 					},
 					new { ToUserID = userID },
-					splitOn: "FromUserID").ToList());
+					splitOn: "IsApproved").ToList());
 			return list;
 		}
 

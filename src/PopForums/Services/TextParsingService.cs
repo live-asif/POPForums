@@ -198,7 +198,7 @@ namespace PopForums.Services
 
 			// replace img and a tags
 			text = Regex.Replace(text, @"(<a href="")(\S+)""( *target=""?[_\w]*""?)*>", "[url=$2]", RegexOptions.IgnoreCase);
-			text = Regex.Replace(text, @"(<img )(\S+ )*(src="")(\S+)("")( *\S+)*( */?>)", "[image=$4]", RegexOptions.IgnoreCase);
+			text = Regex.Replace(text, @"<img .*src=""(\S+)""./>", "[image=$1]", RegexOptions.IgnoreCase);
 			text = Regex.Replace(text, @"(<iframe )(\S+ )*(src=""https?://www.youtube.com/embed/)(\S+)("")( *\S+)*( */iframe>)", "[youtube=https://www.youtube.com/watch?v=$4]", RegexOptions.IgnoreCase);
 
 			// catch remaining HTML as invalid
@@ -374,8 +374,8 @@ namespace PopForums.Services
 
 			// line breaks and block elements
 			text = Regex.Replace(text, @"(\r\n){3,}", "\r\n\r\n");
-			if (!text.StartsWith("[quote]")) text = "<p>" + text;
-			if (!text.EndsWith("[/quote]")) text += "</p>";
+			if (!text.StartsWith("[quote]") && !string.IsNullOrWhiteSpace(text)) text = "<p>" + text;
+			if (!text.EndsWith("[/quote]") && !string.IsNullOrWhiteSpace(text)) text += "</p>";
 			text = text.Replace("[quote]", "<blockquote>");
 			text = text.Replace("[/quote]", "</blockquote>");
 			text = Regex.Replace(text, @"(?<!(</blockquote>))\r\n\r\n(?!(<p>|<blockquote>|</blockquote>))", "</p><p>", RegexOptions.IgnoreCase);

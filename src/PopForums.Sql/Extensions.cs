@@ -1,11 +1,13 @@
 ﻿using System;
+using System.Data;
 using System.Data.Common;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using PopForums.Configuration;
 using PopForums.Sql.Repositories;
 using PopForums.Repositories;
 
-namespace PopForums.Data.Sql
+namespace PopForums.Sql
 {
 	public static class Extensions
 	{
@@ -20,33 +22,6 @@ namespace PopForums.Data.Sql
 			var parameter = sqlObjectFactory.GetParameter(parameterName, value);
             command.Parameters.Add(parameter);
 			return command;
-		}
-
-		public static object ExecuteAndReturnIdentity(this DbCommand command)
-		{
-			if (command.Connection == null)
-				throw new Exception("SqlCommand has no connection.");
-			command.ExecuteNonQuery();
-			command.Parameters.Clear();
-			command.CommandText = "SELECT @@IDENTITY";
-			var result = command.ExecuteScalar();
-			return result;
-		}
-
-		public static DbDataReader ReadOne(this DbDataReader reader, Action<DbDataReader> action)
-		{
-			if (reader.Read())
-				action(reader);
-			reader.Dispose();
-			return reader;
-		}
-
-		public static DbDataReader ReadAll(this DbDataReader reader, Action<DbDataReader> action)
-		{
-			while (reader.Read())
-				action(reader);
-			reader.Dispose();
-			return reader;
 		}
 
 		public static void Using(this DbConnection connection, Action<DbConnection> action)
@@ -66,6 +41,23 @@ namespace PopForums.Data.Sql
 			}
 		}
 
+		public static async Task UsingAsync(this DbConnection connection, Func<DbConnection, Task> action)
+		{
+			using (connection)
+			{
+				try
+				{
+					await connection.OpenAsync();
+					await action(connection);
+				}
+				finally
+				{
+					connection.Close();
+					connection.Dispose();
+				}
+			}
+		}
+
 		public static void AddPopForumsSql(this IServiceCollection services)
 		{
 			services.AddTransient<ICacheHelper, CacheHelper>();
@@ -75,6 +67,7 @@ namespace PopForums.Data.Sql
 			services.AddTransient<IAwardDefinitionRepository, AwardDefinitionRepository>();
 			services.AddTransient<IBanRepository, BanRepository>();
 			services.AddTransient<ICategoryRepository, CategoryRepository>();
+			services.AddTransient<IEmailQueueRepository, EmailQueueRepository>();
 			services.AddTransient<IErrorLogRepository, ErrorLogRepository>();
 			services.AddTransient<IEventDefinitionRepository, EventDefinitionRepository>();
 			services.AddTransient<IExternalUserAssociationRepository, ExternalUserAssociationRepository>();
@@ -90,12 +83,14 @@ namespace PopForums.Data.Sql
 			services.AddTransient<IProfileRepository, ProfileRepository>();
 			services.AddTransient<IQueuedEmailMessageRepository, QueuedEmailMessageRepository>();
 			services.AddTransient<IRoleRepository, RoleRepository>();
+			services.AddTransient<ISearchIndexQueueRepository, SearchIndexQueueRepository>();
 			services.AddTransient<ISearchRepository, SearchRepository>();
 			services.AddTransient<ISecurityLogRepository, SecurityLogRepository>();
 			services.AddTransient<ISettingsRepository, SettingsRepository>();
 			services.AddTransient<ISetupRepository, SetupRepository>();
 			services.AddTransient<ISubscribedTopicsRepository, SubscribedTopicsRepository>();
 			services.AddTransient<ITopicRepository, TopicRepository>();
+			services.AddTransient<ITopicViewLogRepository, TopicViewLogRepository>();
 			services.AddTransient<IUserAvatarRepository, UserAvatarRepository>();
 			services.AddTransient<IUserAwardRepository, UserAwardRepository>();
 			services.AddTransient<IUserImageRepository, UserImageRepository>();
@@ -115,19 +110,13 @@ namespace PopForums.Data.Sql
 			return reader.GetInt32(index);
 		}
 
-		public static DateTime? NullDateTimeDbHelper(this DbDataReader reader, int index)
-		{
-			if (reader.IsDBNull(index)) return null;
-			return reader.GetDateTime(index);
-		}
-
 		public static string NullStringDbHelper(this DbDataReader reader, int index)
 		{
 			if (reader.IsDBNull(index)) return null;
 			return reader.GetString(index);
 		}
 
-		public static Guid? NullGuidDbHelper(this DbDataReader reader, int index)
+		public static Guid? NullGuidDbHelper(this IDataReader reader, int index)
 		{
 			if (reader.IsDBNull(index)) return null;
 			return reader.GetGuid(index);
